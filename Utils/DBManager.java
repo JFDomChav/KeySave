@@ -19,69 +19,89 @@ import javax.json.JsonValue;
 public class DBManager {
     private final String DB_NAME = "KeySave";
     private final String DB_FOLDER = "Passwords";
+    private final String DB_STRUCT_JSON_PATH = "res/DatabaseStructure.json";
     
     // Function to check if a previously created database exists, if not then create it
     public boolean startDB(){
         // Verify if exists a previous data base
         String sql = "SELECT name FROM sqlite_master WHERE type = 'table';";
-        String url = System.getProperty("user.dir")+"/DatabaseStructure.json";
         try(
+            Connection conn = this.getConnection();
             ResultSet res = this.select(sql);
-            InputStream is = new FileInputStream(url);
-            JsonReader reader = Json.createReader(is);
         ){
             // If not exists, then create one
             if((res == null) || (!res.next())){
-                // Open the DB structure JSON
-                JsonObject obj = reader.readObject();
-                JsonArray tablesArray = obj.getJsonArray("Tables");
-                String sqlCreate = "";
-                // Iterate table by table
-                for (JsonObject table: tablesArray.getValuesAs(JsonObject.class)) {
-                    String tableName = table.getString("Name");
-                    sqlCreate += "CREATE TABLE IF NOT EXISTS "+tableName+"(";
-                    // Iterate column by column
-                    JsonArray columns = table.getJsonArray("Columns");
-                    for (JsonObject column: columns.getValuesAs(JsonObject.class)) {
-                        String columnName = column.getString("Name");
-                        sqlCreate += columnName+" "+column.getString("Type");
-                        // Verify if length and options are null, if not add values
-                        if(column.get("Length") != JsonValue.NULL){
-                            sqlCreate += "("+column.getString("Length")+")";
-                        }
-                        if(column.get("Options") != JsonValue.NULL){
-                            sqlCreate += " "+column.getString("Options")+",";
-                        }else{
-                            sqlCreate += ",";
-                        }
+                String stmt = this.buildStatementToCreateDB();
+                // Verify if the statement is null
+                if(stmt != null){
+                    // Try a commit into DB, if something was wrong, then do a rollback
+                    if(conn.prepareStatement(stmt).execute()){
+                        conn.commit();
+                    }else{
+                        conn.rollback();
                     }
-                    // Add primary and foreign keys
-                    JsonArray PKS = table.getJsonArray("Primary keys");
-                    // Iterate PK's array
-                    for(JsonString PK: PKS.getValuesAs(JsonString.class)){
-                        String value = PK.getString();
-                        sqlCreate += "PRIMARY KEY("+value+"),";
-                    }
-                    JsonArray FKS = table.getJsonArray("Foreign keys");
-                    // Iterate FK's array
-                    for(JsonObject FK: FKS.getValuesAs(JsonObject.class)){
-                        sqlCreate += "FOREIGN KEY("+FK.getString("Name")+
-                                ") REFERENCES "+FK.getString("Table referenced")
-                                +"("+FK.getString("Name referenced")+"),";
-                    }
-                    // Delete the last coma and finish the create table instruction;
-                    sqlCreate = sqlCreate.substring(0, sqlCreate.length()-1) + ");\n";
+                }else{
+                    // manage null statement
                 }
-                // Execute the statement
             }
         }catch(SQLException e){
             // Manage the SQL exception
             return false;
-        } catch (IOException ex) {
-            // Manage the file exception
-            return false;
         }
         return true;
+    }
+    
+    private String buildStatementToCreateDB(){
+        String url = System.getProperty("user.dir")+"/"+this.DB_STRUCT_JSON_PATH;
+        String sqlCreate = null;
+        try(
+            InputStream is = new FileInputStream(url);
+            JsonReader reader = Json.createReader(is);
+        ){
+            // Open the DB structure JSON
+            JsonObject obj = reader.readObject();
+            JsonArray tablesArray = obj.getJsonArray("Tables");
+            sqlCreate = "";
+            // Iterate table by table
+            for (JsonObject table: tablesArray.getValuesAs(JsonObject.class)) {
+                String tableName = table.getString("Name");
+                sqlCreate += "CREATE TABLE IF NOT EXISTS "+tableName+"(";
+                // Iterate column by column
+                JsonArray columns = table.getJsonArray("Columns");
+                for (JsonObject column: columns.getValuesAs(JsonObject.class)) {
+                    String columnName = column.getString("Name");
+                    sqlCreate += columnName+" "+column.getString("Type");
+                    // Verify if length and options are null, if not add values
+                    if(column.get("Length") != JsonValue.NULL){
+                        sqlCreate += "("+column.getString("Length")+")";
+                    }
+                    if(column.get("Options") != JsonValue.NULL){
+                        sqlCreate += " "+column.getString("Options")+",";
+                    }else{
+                        sqlCreate += ",";
+                    }
+                }
+                // Add primary and foreign keys
+                JsonArray PKS = table.getJsonArray("Primary keys");
+                // Iterate PK's array
+                for(JsonString PK: PKS.getValuesAs(JsonString.class)){
+                    String value = PK.getString();
+                    sqlCreate += "PRIMARY KEY("+value+"),";
+                }
+                JsonArray FKS = table.getJsonArray("Foreign keys");
+                // Iterate FK's array
+                for(JsonObject FK: FKS.getValuesAs(JsonObject.class)){
+                    sqlCreate += "FOREIGN KEY("+FK.getString("Name")+
+                            ") REFERENCES "+FK.getString("Table referenced")
+                            +"("+FK.getString("Name referenced")+"),";
+                }
+                // Delete the last coma and finish the create table instruction;
+                sqlCreate = sqlCreate.substring(0, sqlCreate.length()-1) + ");\n";
+            }
+        }catch(IOException e){
+            
+        }
+        return sqlCreate;
     }
     
     // Function to create a DB connection
